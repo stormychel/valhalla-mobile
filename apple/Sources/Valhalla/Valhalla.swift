@@ -3,12 +3,14 @@ import ValhallaModels
 import ValhallaConfigModels
 
 public protocol ValhallaProviding {
-    
+
     init(_ config: ValhallaConfig) throws
-    
+
     init(configPath: String) throws
 
     func route(request: RouteRequest) throws -> RouteResponse
+
+    func traceAttributes(rawRequest request: String) -> String
 }
 
 public final class Valhalla: ValhallaProviding {
@@ -58,5 +60,9 @@ public final class Valhalla: ValhallaProviding {
 
     public func route(rawRequest request: String) -> String {
         actor!.route(request)
+    }
+
+    public func traceAttributes(rawRequest request: String) -> String {
+        actor!.traceAttributes(request)
     }
 }

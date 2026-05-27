@@ -73,4 +73,25 @@ std::string route(const char *request, void* actor) {
 
     return result;
 }
+
+std::string trace_attributes(const char *request, void* actor) {
+    std::string result;
+    try {
+        result = ((ValhallaActor*) actor)->trace_attributes(request);
+    } catch (const valhalla::valhalla_exception_t &err) {
+        printf("[ValhallaActor] trace_attributes valhalla_exception: %s\n", err.what());
+        std::string code = std::to_string(err.code);
+        std::string message = err.message.c_str();
+
+        result = "{\"code\":" + code + ",\"message\":\"" + message + "\"}";
+    } catch (const std::exception &err) {
+        printf("[ValhallaActor] trace_attributes std::exception: %s\n", err.what());
+        result = "{\"code\":-1,\"message\":\"" + std::string(err.what()) + "\"}";
+    } catch (...) {
+        printf("[ValhallaActor] trace_attributes unknown exception");
+        result = "{\"code\":-1,\"message\":\"unknown exception\"}";
+    }
+
+    return result;
+}
 #endif
