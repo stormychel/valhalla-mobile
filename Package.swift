@@ -1,8 +1,30 @@
 // swift-tools-version:5.8
 import PackageDescription
 
-// Use the local binary if true
-let useLocalBinary = Context.environment["VALHALLA_MOBILE_DEV"].flatMap(Bool.init) ?? false
+// The trace_attributes-bridge branch references a symbol the published 0.5.1
+// xcframework does not contain. To stop the link from failing later in the
+// build with a confusing diagnostic, fail the manifest at resolve time when
+// the locally rebuilt xcframework is missing. Consumers must run
+// `scripts/build_apple.sh arm64-ios-simulator` (etc.) + `scripts/create_xcframework.sh`
+// before resolving this package.
+import Foundation
+let localBinaryPath = "build/apple/valhalla-wrapper.xcframework"
+let localBinaryFullPath = Context.packageDirectory + "/" + localBinaryPath
+let envOverride = Context.environment["VALHALLA_MOBILE_DEV"].flatMap(Bool.init) ?? false
+let localBinaryExists = FileManager.default.fileExists(atPath: localBinaryFullPath)
+let useLocalBinary = envOverride || localBinaryExists
+if !useLocalBinary {
+    fatalError("""
+    valhalla-mobile (feat/trace-attributes-bridge): the source references the \
+    `trace_attributes` symbol which is not in the published 0.5.1 xcframework. \
+    Rebuild the local wrapper before resolving this package:
+        scripts/build_apple.sh arm64-ios-simulator
+        scripts/build_apple.sh arm64-ios
+        scripts/build_apple.sh x64-ios-simulator
+        scripts/create_xcframework.sh
+    Or set VALHALLA_MOBILE_DEV=true if you already have a binary in place.
+    """)
+}
 
 // Use the local binary
 var binaryTarget: Target = .binaryTarget(

@@ -3,12 +3,14 @@ import ValhallaModels
 import ValhallaConfigModels
 
 public protocol ValhallaProviding {
-    
+
     init(_ config: ValhallaConfig) throws
-    
+
     init(configPath: String) throws
 
     func route(request: RouteRequest) throws -> RouteResponse
+
+    func traceAttributes(rawRequest request: String) -> String
 }
 
 public final class Valhalla: ValhallaProviding {
@@ -58,5 +60,18 @@ public final class Valhalla: ValhallaProviding {
 
     public func route(rawRequest request: String) -> String {
         actor!.route(request)
+    }
+
+    /// Raw `trace_attributes` action. Pass a JSON request, receive the JSON
+    /// response.
+    ///
+    /// **JSON only.** This bridge round-trips through an `NSString` so it
+    /// assumes UTF-8 output. Do not set `"format": "pbf"` in the request —
+    /// Valhalla would return protobuf bytes, which a string-typed bridge
+    /// can truncate or fail to encode. The same constraint applies to the
+    /// existing `route(rawRequest:)`. A binary-safe `Data`-returning API is
+    /// a separate upstream change.
+    public func traceAttributes(rawRequest request: String) -> String {
+        actor!.traceAttributes(request)
     }
 }
