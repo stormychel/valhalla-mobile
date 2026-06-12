@@ -59,9 +59,26 @@ std::string config_file(config_path);
     rapidjson::read_json(config_file, config);
 
     auto mjolnir_config = config.get_child("mjolnir");
+    // Only attach the HTTP tile-getter when a tile_url is actually configured.
+    // TrackHound routes in pure loose-tile mode (tile_dir set, tile_url empty).
+    // Always injecting a getter forced GraphReader into fetch mode, so a
+    // referenced-but-missing tile attempted a remote fetch with an empty URL
+    // and crashed (std::exception: basic_string / "Downloading tile N from ")
+    // instead of returning nullptr and letting the router route around the
+    // hole. With a null getter, GraphReader::GetGraphTile returns nullptr for a
+    // missing loose tile (see graphreader.cc `if (!tile_getter_) return
+    // nullptr;`) — exactly what buffered/sliced offline packs need so they can
+    // stay small instead of bundling the full tile hierarchy. (TrackHound #207)
+    std::unique_ptr<TileGetterWrapper> tile_getter;
+    if (!mjolnir_config.get<std::string>("tile_url", std::string()).empty()) {
+      tile_getter = std::make_unique<TileGetterWrapper>(
+          http_client, mjolnir_config.get<bool>("tile_url_gz", false));
+    } else if (http_client) {
+      // We own it and aren't handing it to a getter — don't leak it.
+      delete http_client;
+    }
     graph_reader = std::make_unique<valhalla::baldr::GraphReader>(
-      mjolnir_config, 
-      std::make_unique<TileGetterWrapper>(http_client, mjolnir_config.get<bool>("tile_url_gz", false))
+      mjolnir_config, std::move(tile_getter)
     );
     // Setup the actor
     actor = std::make_unique<valhalla::tyr::actor_t>(config, *graph_reader, true);
