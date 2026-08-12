@@ -27,20 +27,46 @@ enum ValhallaFileManager {
     ///
     /// Content-addressing fixes both. Different configs get different files, so
     /// they cannot overwrite each other; identical configs share one file and
-    /// write identical bytes, so the directory stays bounded and nothing needs
-    /// cleaning up. The write is atomic, so a concurrent reader sees a whole
-    /// file or no file.
+    /// write identical bytes. The write is atomic, so a concurrent reader sees
+    /// a whole file or no file.
+    ///
+    /// This rests on `JSONEncoder` being byte-stable for a given config, which
+    /// holds because `ValhallaConfig` has no `Dictionary` properties — Swift's
+    /// per-process hash seeding would otherwise reorder dictionary keys and
+    /// scatter a fresh file on every launch. Adding a `Dictionary` property to
+    /// `ValhallaConfig` would silently break that, and the symptom would be a
+    /// slowly filling Application Support rather than a crash — worth a test
+    /// here once this package's test target builds again (it currently fails to
+    /// resolve: the library requires macOS 10.13 while its model dependencies
+    /// require 10.15).
     static func saveConfigTo(_ config: ValhallaConfig) throws -> URL {
         guard let applicationDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             throw ValhallaFileManagerError.systemDirNotFound("applicationSupport")
         }
         try FileManager.default.createDirectory(at: applicationDir, withIntermediateDirectories: true)
+        removeLegacyConfigIfPresent(in: applicationDir)
         let data = try JSONEncoder().encode(config)
         let configURL = applicationDir
             .appendingPathComponent("valhalla-config-\(stableDigest(of: data)).json")
 
-        try data.write(to: configURL, options: .atomic)
+        // Same config, same bytes — rewriting it is pure I/O on every engine
+        // construction, and an app may build many.
+        if !FileManager.default.fileExists(atPath: configURL.path) {
+            try data.write(to: configURL, options: .atomic)
+        }
         return configURL
+    }
+
+    /// Delete the single shared config this used to write.
+    ///
+    /// Nothing reads it any more, and leaving it behind means every app that
+    /// upgrades carries a stale file forever. Best-effort: failing to remove it
+    /// is harmless and must never block engine construction.
+    private static func removeLegacyConfigIfPresent(in directory: URL) {
+        let legacy = directory.appendingPathComponent("valhalla-config.json")
+        if FileManager.default.fileExists(atPath: legacy.path) {
+            try? FileManager.default.removeItem(at: legacy)
+        }
     }
 
     /// FNV-1a over the encoded config.
