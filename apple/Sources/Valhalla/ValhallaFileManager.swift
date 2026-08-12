@@ -44,28 +44,61 @@ enum ValhallaFileManager {
             throw ValhallaFileManagerError.systemDirNotFound("applicationSupport")
         }
         try FileManager.default.createDirectory(at: applicationDir, withIntermediateDirectories: true)
-        removeLegacyConfigIfPresent(in: applicationDir)
+        removeLegacyConfig(in: applicationDir)
         let data = try JSONEncoder().encode(config)
         let configURL = applicationDir
             .appendingPathComponent("valhalla-config-\(stableDigest(of: data)).json")
 
-        // Same config, same bytes — rewriting it is pure I/O on every engine
-        // construction, and an app may build many.
-        if !FileManager.default.fileExists(atPath: configURL.path) {
-            try data.write(to: configURL, options: .atomic)
-        }
+        // Always write, atomically. An earlier revision skipped the write when
+        // a file already sat at this path, to save re-encoding identical bytes
+        // for apps that build many engines. That saving is real but small, and
+        // it introduced a worse failure mode: a damaged file at the path would
+        // be trusted forever, wedging every future engine construction with
+        // `Could not parse json`. Writing unconditionally is what the code did
+        // before this change and cannot regress.
+        try data.write(to: configURL, options: .atomic)
+        sweepStaleConfigs(in: applicationDir, keeping: configURL)
         return configURL
     }
 
     /// Delete the single shared config this used to write.
     ///
     /// Nothing reads it any more, and leaving it behind means every app that
-    /// upgrades carries a stale file forever. Best-effort: failing to remove it
-    /// is harmless and must never block engine construction.
-    private static func removeLegacyConfigIfPresent(in directory: URL) {
-        let legacy = directory.appendingPathComponent("valhalla-config.json")
-        if FileManager.default.fileExists(atPath: legacy.path) {
-            try? FileManager.default.removeItem(at: legacy)
+    /// upgrades carries a stale file forever. Safe to do while an older engine
+    /// is alive: the C++ core parses the config once in `ValhallaActor`'s
+    /// constructor and keeps only the parsed tree, so the path is never
+    /// re-read. Best-effort — failing to remove it must never block engine
+    /// construction.
+    private static func removeLegacyConfig(in directory: URL) {
+        try? FileManager.default.removeItem(at: directory.appendingPathComponent("valhalla-config.json"))
+    }
+
+    /// Drop content-addressed configs nothing is going to ask for again.
+    ///
+    /// `ValhallaConfig` embeds the ABSOLUTE tile path, and iOS rotates the
+    /// container UUID on every app update, so each update re-mints every config
+    /// the app uses. At ~10 KB apiece across per-region tile directories and
+    /// years of updates that is a slow leak — untidy rather than dangerous, but
+    /// there is no reason to keep them.
+    ///
+    /// The grace window is what makes this safe. A file written moments ago is
+    /// never swept, which closes the only harmful window: between another
+    /// thread's write and the C++ side reading it. Sweeping a config that IS in
+    /// use is harmless anyway — it has already been parsed, and the next
+    /// construction simply writes it again. Crash-orphaned `.atomic` temp files
+    /// in the same directory age out the same way.
+    private static func sweepStaleConfigs(in directory: URL, keeping current: URL) {
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+
+        for url in entries where url.lastPathComponent.hasPrefix("valhalla-config-") {
+            guard url != current else { continue }
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+            if let modified, modified < cutoff {
+                try? FileManager.default.removeItem(at: url)
+            }
         }
     }
 
