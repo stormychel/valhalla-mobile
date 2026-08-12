@@ -30,22 +30,20 @@ enum ValhallaFileManager {
     /// write identical bytes. The write is atomic, so a concurrent reader sees
     /// a whole file or no file.
     ///
-    /// This rests on `JSONEncoder` being byte-stable for a given config, which
-    /// holds because `ValhallaConfig` has no `Dictionary` properties — Swift's
-    /// per-process hash seeding would otherwise reorder dictionary keys and
-    /// scatter a fresh file on every launch. Adding a `Dictionary` property to
-    /// `ValhallaConfig` would silently break that, and the symptom would be a
-    /// slowly filling Application Support rather than a crash — worth a test
-    /// here once this package's test target builds again (it currently fails to
-    /// resolve: the library requires macOS 10.13 while its model dependencies
-    /// require 10.15).
+    /// This rests on the encoding being byte-stable for a given config, which
+    /// is why `.sortedKeys` is not optional here. Without it, encoding the very
+    /// same `ValhallaConfig` twice produces two different byte sequences — same
+    /// length, different key order — so every engine construction would mint a
+    /// new file and Application Support would grow without bound. Measured, not
+    /// assumed: five encodes of one config produced five distinct digests
+    /// before this was added. `TestValhallaFileManager` pins it.
     static func saveConfigTo(_ config: ValhallaConfig) throws -> URL {
         guard let applicationDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             throw ValhallaFileManagerError.systemDirNotFound("applicationSupport")
         }
         try FileManager.default.createDirectory(at: applicationDir, withIntermediateDirectories: true)
         removeLegacyConfig(in: applicationDir)
-        let data = try JSONEncoder().encode(config)
+        let data = try Self.deterministicEncoder.encode(config)
         let configURL = applicationDir
             .appendingPathComponent("valhalla-config-\(stableDigest(of: data)).json")
 
@@ -101,6 +99,18 @@ enum ValhallaFileManager {
             }
         }
     }
+
+    /// Encoder whose output depends only on the config's contents.
+    ///
+    /// `.sortedKeys` is load-bearing: dictionary iteration order varies between
+    /// equal dictionaries, so the default encoder gives the same config a
+    /// different byte sequence — and therefore a different filename — on each
+    /// call.
+    internal static let deterministicEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }()
 
     /// FNV-1a over the encoded config.
     ///
