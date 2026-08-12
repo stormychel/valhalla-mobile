@@ -9,16 +9,52 @@ enum ValhallaFileManagerError: Error {
 
 enum ValhallaFileManager {
     
+    /// Write `config` to disk and return the path the C++ core should read.
+    ///
+    /// The file is named after the config's own content. Every `Valhalla`
+    /// instance used to share one `valhalla-config.json`, which is a data race
+    /// as soon as a process builds more than one engine — and an app that
+    /// routes on a background task while the user plans a route does exactly
+    /// that. Two intermittent failures came out of it:
+    ///
+    /// - A reader catching a partially-written file: `Could not parse json,
+    ///   error at offset: N`, because the write was not atomic.
+    /// - A reader catching a *complete* file written by a different engine, and
+    ///   silently routing against the wrong tile directory. That one is worse —
+    ///   it doesn't look like corruption, it looks like a bad route, or
+    ///   `No suitable edges near location` when the requested coordinates
+    ///   aren't inside the other engine's graph.
+    ///
+    /// Content-addressing fixes both. Different configs get different files, so
+    /// they cannot overwrite each other; identical configs share one file and
+    /// write identical bytes, so the directory stays bounded and nothing needs
+    /// cleaning up. The write is atomic, so a concurrent reader sees a whole
+    /// file or no file.
     static func saveConfigTo(_ config: ValhallaConfig) throws -> URL {
         guard let applicationDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             throw ValhallaFileManagerError.systemDirNotFound("applicationSupport")
         }
         try FileManager.default.createDirectory(at: applicationDir, withIntermediateDirectories: true)
-        let configURL = applicationDir.appendingPathComponent("valhalla-config.json")
         let data = try JSONEncoder().encode(config)
+        let configURL = applicationDir
+            .appendingPathComponent("valhalla-config-\(stableDigest(of: data)).json")
 
-        try data.write(to: configURL)
+        try data.write(to: configURL, options: .atomic)
         return configURL
+    }
+
+    /// FNV-1a over the encoded config.
+    ///
+    /// Deliberately not `hashValue`: Swift seeds that per process, so the same
+    /// config would land in a different file on every launch and the directory
+    /// would grow without bound.
+    private static func stableDigest(of data: Data) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in data {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(hash, radix: 16)
     }
 
     /// Add tzdata to the Library directory
