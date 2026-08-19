@@ -11,6 +11,8 @@ public protocol ValhallaProviding {
     func route(request: RouteRequest) throws -> RouteResponse
 
     func traceAttributes(rawRequest request: String) -> String
+
+    func traceRoute(rawRequest request: String) -> String
 }
 
 public final class Valhalla: ValhallaProviding {
@@ -73,5 +75,18 @@ public final class Valhalla: ValhallaProviding {
     /// a separate upstream change.
     public func traceAttributes(rawRequest request: String) -> String {
         actor!.traceAttributes(request)
+    }
+
+    /// Raw `trace_route` action — map matching that returns a *routed* result:
+    /// the input shape snapped to the network, with legs, maneuvers and a
+    /// narrative, rather than `trace_attributes`' per-edge data. This is what
+    /// turns a recorded GPX into turn-by-turn directions that still follow the
+    /// track, instead of re-routing between sampled points.
+    ///
+    /// **JSON only**, for the same reason as `traceAttributes(rawRequest:)`:
+    /// the bridge round-trips through an `NSString`, so `"format": "pbf"` can
+    /// truncate or fail to encode.
+    public func traceRoute(rawRequest request: String) -> String {
+        actor!.traceRoute(request)
     }
 }
