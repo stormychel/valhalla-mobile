@@ -24,6 +24,7 @@ JNIEXPORT jstring JNICALL Java_com_valhalla_valhalla_ValhallaKotlin_route(JNIEnv
 
 std::string route(const char *request, void* actor);
 std::string trace_attributes(const char *request, void* actor);
+std::string trace_route(const char *request, void* actor);
 void* create_valhalla_actor(const char *config_path, ValhallaMobileHttpClient* http_client = nullptr);
 void delete_valhalla_actor(void* actor);
 
